@@ -4,8 +4,9 @@
 # Purpose: Use Claude Code to fetch current temperature for zip code 10040
 
 # Configuration
-ZIP_CODE="10040"
-OUTPUT_FILE="temperature_${ZIP_CODE}.txt"
+ZIP_CODE="12741"
+mkdir -p data # write output into "data" subdirectory
+OUTPUT_FILE="data/temperature_${ZIP_CODE}.txt"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 # Create the prompt for Claude
