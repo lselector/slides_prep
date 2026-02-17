@@ -64,7 +64,10 @@ def make_output_template(quality_mode):
     """Build output template with date and quality."""
     date_prefix = datetime.now().strftime("%Y%m%d")
     suffix = QUALITY_SUFFIX.get(quality_mode, "")
-    ext = "mp3" if quality_mode == "audio" else "mp4"
+    if quality_mode == "audio":
+        ext = "%(ext)s"
+    else:
+        ext = "mp4"
     template = (
         f"{date_prefix}_"
         f"%(title)s{suffix}.{ext}"
@@ -83,6 +86,24 @@ def get_common_opts(output_template):
     }
 
 # --------------------------------------------------------------
+def get_postprocessors_video():
+    """Return postprocessors to re-encode audio to AAC."""
+    return [{
+        "key": "FFmpegVideoConvertor",
+        "preferedformat": "mp4",
+    }]
+
+# --------------------------------------------------------------
+def get_ffmpeg_args():
+    """Return ffmpeg args for AAC audio encoding."""
+    return [
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+    ]
+
+# --------------------------------------------------------------
 def get_ydl_opts(quality_mode, output_template):
     """Return yt-dlp options for given quality mode."""
     common = get_common_opts(output_template)
@@ -94,6 +115,9 @@ def get_ydl_opts(quality_mode, output_template):
                 "/best[height<=480]/best"
             ),
             "merge_output_format": "mp4",
+            "postprocessor_args": {
+                "merger": get_ffmpeg_args(),
+            },
         }
     if quality_mode == "medium":
         return {
@@ -103,6 +127,9 @@ def get_ydl_opts(quality_mode, output_template):
                 "/best[height<=720]/best"
             ),
             "merge_output_format": "mp4",
+            "postprocessor_args": {
+                "merger": get_ffmpeg_args(),
+            },
         }
     if quality_mode == "high":
         return {
@@ -111,6 +138,9 @@ def get_ydl_opts(quality_mode, output_template):
                 "bestvideo+bestaudio/best"
             ),
             "merge_output_format": "mp4",
+            "postprocessor_args": {
+                "merger": get_ffmpeg_args(),
+            },
         }
     if quality_mode == "audio":
         return {

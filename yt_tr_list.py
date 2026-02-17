@@ -3,6 +3,7 @@
 
 import re
 import sys
+import json
 import argparse
 from pathlib import Path
 
@@ -52,6 +53,36 @@ def parse_urls_file(filepath: str) -> list[dict]:
                     })
         i += 1
     return videos
+
+
+# --------------------------------------------------------------
+def parse_json_file(filepath: str) -> list[dict]:
+    """Parse JSON file into list of video dicts."""
+    text = Path(filepath).read_text(
+        encoding="utf-8"
+    )
+    data = json.loads(text)
+    videos = []
+    for num, (title, url) in enumerate(
+        data.items(), start=1
+    ):
+        vid_id = extract_video_id(url)
+        if vid_id:
+            videos.append({
+                "num": num,
+                "title": title,
+                "url": url,
+                "id": vid_id,
+            })
+    return videos
+
+
+# --------------------------------------------------------------
+def parse_input_file(filepath: str) -> list[dict]:
+    """Auto-detect format and parse input file."""
+    if filepath.endswith(".json"):
+        return parse_json_file(filepath)
+    return parse_urls_file(filepath)
 
 
 # --------------------------------------------------------------
@@ -132,44 +163,27 @@ def try_translate_transcript(tlist):
 
 # --------------------------------------------------------------
 def format_transcript(tref) -> dict:
-    """Format transcript into plain and timestamped."""
+    """Format transcript into plain text."""
     fetched = tref.fetch()
     formatter = TextFormatter()
     plain = formatter.format_transcript(fetched)
-    timestamped = build_timestamped(fetched)
     is_gen = tref.is_generated
     lang = tref.language
     return {
         "plain": plain,
-        "timestamped": timestamped,
         "type": lang,
         "is_generated": is_gen,
     }
 
 
 # --------------------------------------------------------------
-def build_timestamped(fetched) -> str:
-    """Build timestamped text from fetched data."""
-    lines = []
-    for snippet in fetched:
-        start = snippet.start
-        text = snippet.text
-        mins, secs = divmod(int(start), 60)
-        hours, mins = divmod(mins, 60)
-        ts = f"{hours:02d}:{mins:02d}:{secs:02d}"
-        lines.append(f"[{ts}] {text}")
-    return "\n".join(lines)
-
-
-# --------------------------------------------------------------
 def save_transcript(
     out_dir, num, title, video, result
 ):
-    """Save transcript files to output directory."""
+    """Save transcript file to output directory."""
     safe = sanitize_filename(
         f"{num:02d}_{title}"
     )
-    vid_id = video["id"]
     url = video["url"]
     lang_info = (
         "auto-generated"
@@ -182,14 +196,9 @@ def save_transcript(
         f"Transcript type: {lang_info}\n"
         f"{'=' * 60}\n\n"
     )
-    plain_path = out_dir / f"{safe}.txt"
-    plain_path.write_text(
+    out_path = out_dir / f"{safe}.txt"
+    out_path.write_text(
         header + result["plain"] + "\n",
-        encoding="utf-8",
-    )
-    ts_path = out_dir / f"{safe}_timestamped.txt"
-    ts_path.write_text(
-        header + result["timestamped"] + "\n",
         encoding="utf-8",
     )
 
@@ -244,14 +253,14 @@ def main():
     )
     parser.add_argument(
         "input_file",
-        help="File with YouTube URLs",
+        help="File with YouTube URLs (.json or .txt)",
     )
     args = parser.parse_args()
     fpath = args.input_file
     if not Path(fpath).exists():
         print(f"File not found: {fpath}")
         sys.exit(1)
-    videos = parse_urls_file(fpath)
+    videos = parse_input_file(fpath)
     if not videos:
         print("No valid URLs found in file.")
         sys.exit(1)
