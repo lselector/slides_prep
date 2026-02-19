@@ -88,7 +88,7 @@ def extract_models(html):
     pattern = (
         r'href="([^"]+)"[^>]*'
         r'title="([^"]+)">'
-        r'<span class="inline-block max-w-full">'
+        r'<span class="truncate max-w-full">'
     )
     matches = re.findall(pattern, html)
     names = [m[1] for m in matches]

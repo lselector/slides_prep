@@ -1,0 +1,19 @@
+{
+  "name": "browser-automation-cdp",
+  "version": "1.0.0",
+  "description": "Browser automation CLI via Chrome DevTools Protocol for AI agents",
+  "main": "browser.js",
+  "bin": {
+    "browser": "./browser.js"
+  },
+  "scripts": {
+    "test": "node browser.js desc"
+  },
+  "dependencies": {
+    "chrome-remote-interface": "^0.33.0",
+    "commander": "^11.0.0"
+  },
+  "keywords": ["cdp", "chrome", "automation", "ai-agent", "cli"],
+  "author": "AI Agent Developer",
+  "license": "MIT"
+}
