@@ -4,7 +4,7 @@
 import re
 import sys
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import yt_dlp
 
@@ -29,7 +29,7 @@ def build_ydl_opts() -> dict:
 def get_cutoff_date(max_age_days: int) -> str:
     """Get cutoff date string YYYYMMDD."""
     dt = datetime.now(
-        datetime.UTC
+        timezone.utc
     ) - timedelta(days=max_age_days)
     return dt.strftime("%Y%m%d")
 
@@ -81,18 +81,20 @@ def find_recent_entry(info, cutoff) -> str | None:
 def parse_titles_file(
     filepath: str,
 ) -> list[tuple[int, str]]:
-    """Parse titles file into numbered list."""
+    """Parse numbered or plain titles file."""
     results = []
+    counter = 0
     with open(filepath, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            m = re.match(
-                r"^(\d+)\.\s+(.+)", line,
-            )
-            if not m:
+            if not line:
                 continue
-            num = int(m.group(1))
-            rest = m.group(2).strip()
+            num, rest = parse_one_line(line)
+            if rest is None:
+                continue
+            if num is None:
+                counter += 1
+                num = counter
             if rest == "...":
                 continue
             rest = re.sub(
@@ -101,6 +103,15 @@ def parse_titles_file(
             )
             results.append((num, rest))
     return results
+
+
+# --------------------------------------------------------------
+def parse_one_line(line: str):
+    """Parse one line, numbered or plain."""
+    m = re.match(r"^(\d+)\.\s+(.+)", line)
+    if m:
+        return int(m.group(1)), m.group(2).strip()
+    return None, line
 
 
 # --------------------------------------------------------------
@@ -167,6 +178,12 @@ def handle_single_title(args) -> None:
 
 
 # --------------------------------------------------------------
+def output_from_input(fpath: str) -> str:
+    """Derive output path from input path."""
+    return fpath.replace("titles", "URLs")
+
+
+# --------------------------------------------------------------
 def handle_file_mode(args) -> None:
     """Handle file-based search mode."""
     fpath = args.input or DEFAULT_INPUT
@@ -181,7 +198,7 @@ def handle_file_mode(args) -> None:
     results = search_all_titles(
         titles, args.days,
     )
-    out = args.output or DEFAULT_OUTPUT
+    out = args.output or output_from_input(fpath)
     write_results(out, results)
 
 
@@ -198,7 +215,7 @@ def parse_args():
     )
     parser.add_argument(
         "--output", "-o",
-        default=DEFAULT_OUTPUT,
+        default=None,
         help="Output URLs file",
     )
     parser.add_argument(
