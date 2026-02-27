@@ -2,22 +2,33 @@
 """Transcribe MP3 audio files to text."""
 
 # Usage:
-#   python transcribe_mp3_to_txt.py <audio_file.mp3>
+#   python transcribe_mp3_to_txt.py <audio.mp3>
+#   python transcribe_mp3_to_txt.py -m small audio.mp3
+#   python transcribe_mp3_to_txt.py -e mlx audio.mp3
 #   python transcribe_mp3_to_txt.py --help
 #
 # Description:
-#   Transcribes an MP3 audio file to text
-#   using the faster-whisper model.
-#   Uses the "medium" model on CPU
-#   with int8 compute type.
+#   Transcribes an MP3 audio file to text.
+#   Supports two engines:
+#     - "mlx" (default): lightning-whisper-mlx
+#       optimized for Apple Silicon
+#     - "whisper": faster-whisper
+#       on CPU with int8 compute type
+#
+# Models (both engines):
+#   tiny (default), base, small, medium
+#   MLX also supports: distil-medium.en,
+#     distil-small.en, large, large-v2, etc.
 #
 # Output:
-#   Also saves transcript to a .txt file
+#   Saves transcript to a .txt file
 #   with the same name as the audio file.
 #
-# Example:
-#   python transcribe_mp3_to_txt.py my_recording.mp3
-#   => creates my_recording.txt
+# Examples:
+#   python transcribe_mp3_to_txt.py rec.mp3
+#   python transcribe_mp3_to_txt.py -m small rec.mp3
+#   python transcribe_mp3_to_txt.py -e mlx rec.mp3
+#   python transcribe_mp3_to_txt.py -e mlx -m tiny rec.mp3
 
 import argparse
 import os
@@ -36,7 +47,16 @@ warnings.filterwarnings(
     "ignore", message=".*MKL.*"
 )
 
-from faster_whisper import WhisperModel
+WHISPER_MODELS = [
+    "tiny", "base", "small", "medium",
+]
+
+MLX_MODELS = [
+    "tiny", "base", "small", "medium",
+    "distil-small.en", "distil-medium.en",
+    "large", "large-v2", "distil-large-v2",
+    "large-v3", "distil-large-v3",
+]
 
 
 # --------------------------------------------------------------
@@ -45,28 +65,100 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description=(
             "Transcribe an MP3 audio file "
-            "to text using faster-whisper."
+            "to text."
         ),
         epilog=(
-            "Example: python "
-            "transcribe_mp3_to_txt.py rec.mp3"
+            "Examples:\n"
+            "  python transcribe_mp3_to_txt.py"
+            " rec.mp3\n"
+            "  python transcribe_mp3_to_txt.py"
+            " -m small rec.mp3\n"
+            "  python transcribe_mp3_to_txt.py"
+            " -e mlx rec.mp3\n"
+        ),
+        formatter_class=(
+            argparse.RawDescriptionHelpFormatter
         ),
     )
     parser.add_argument(
         "audio_file",
         help="Path to the MP3 file",
     )
+    parser.add_argument(
+        "-m", "--model",
+        default="tiny",
+        help=(
+            "Model size: tiny (default), "
+            "base, small, medium. "
+            "MLX also supports distil-* and "
+            "large variants."
+        ),
+    )
+    parser.add_argument(
+        "-e", "--engine",
+        default="mlx",
+        choices=["whisper", "mlx"],
+        help=(
+            "Engine: mlx (lightning-whisper"
+            "-mlx for Apple Silicon, "
+            "default) or whisper "
+            "(faster-whisper on CPU)."
+        ),
+    )
     return parser.parse_args()
 
 
 # --------------------------------------------------------------
-def load_model():
-    """Load the Whisper model."""
-    print("Loading Whisper model...")
+def validate_model(engine, model):
+    """Validate model name for the engine."""
+    if engine == "whisper":
+        if model not in WHISPER_MODELS:
+            valid = ", ".join(WHISPER_MODELS)
+            raise ValueError(
+                f"Invalid model '{model}' "
+                f"for whisper engine. "
+                f"Valid: {valid}"
+            )
+    elif engine == "mlx":
+        if model not in MLX_MODELS:
+            valid = ", ".join(MLX_MODELS)
+            raise ValueError(
+                f"Invalid model '{model}' "
+                f"for mlx engine. "
+                f"Valid: {valid}"
+            )
+
+
+# --------------------------------------------------------------
+def load_whisper_model(model_name):
+    """Load a faster-whisper model."""
+    from faster_whisper import WhisperModel
+    print(
+        f"Loading faster-whisper "
+        f"model '{model_name}'..."
+    )
     model = WhisperModel(
-        "medium",
+        model_name,
         device="cpu",
         compute_type="int8",
+    )
+    return model
+
+
+# --------------------------------------------------------------
+def load_mlx_model(model_name):
+    """Load a lightning-whisper-mlx model."""
+    from lightning_whisper_mlx import (
+        LightningWhisperMLX,
+    )
+    print(
+        f"Loading mlx-whisper "
+        f"model '{model_name}'..."
+    )
+    model = LightningWhisperMLX(
+        model=model_name,
+        batch_size=12,
+        quant=None,
     )
     return model
 
@@ -96,7 +188,7 @@ def get_audio_duration(audio_file):
 
 # --------------------------------------------------------------
 def try_get_duration(audio_file):
-    """Try to get duration, return None on fail."""
+    """Try to get duration, return None."""
     try:
         return get_audio_duration(audio_file)
     except Exception:
@@ -104,13 +196,23 @@ def try_get_duration(audio_file):
 
 
 # --------------------------------------------------------------
-def transcribe_audio(model, audio_file):
-    """Transcribe an MP3 file to text."""
+def transcribe_whisper(model, audio_file):
+    """Transcribe using faster-whisper."""
     print(f"Transcribing {audio_file}...")
     segments, info = model.transcribe(
         audio_file, language="en"
     )
     return segments, info
+
+
+# --------------------------------------------------------------
+def transcribe_mlx(model, audio_file):
+    """Transcribe using lightning-whisper-mlx."""
+    print(f"Transcribing {audio_file}...")
+    result = model.transcribe(
+        audio_path=audio_file
+    )
+    return result
 
 
 # --------------------------------------------------------------
@@ -136,7 +238,9 @@ def calc_pct_and_eta(
     """Calculate percent done and ETA."""
     if duration is None or duration <= 0:
         return None, None
-    pct = min(seg_end / duration * 100, 100.0)
+    pct = min(
+        seg_end / duration * 100, 100.0
+    )
     elapsed = time.time() - start_time
     if pct > 0:
         total_est = elapsed / (pct / 100.0)
@@ -174,17 +278,17 @@ def print_timing(
 
 # --------------------------------------------------------------
 def make_output_path(audio_file):
-    """Build output .txt path from audio path."""
+    """Build output .txt path from audio."""
     p = Path(audio_file)
     return p.with_suffix(".txt")
 
 
 # --------------------------------------------------------------
-def process_segments(
-    segments, info, duration, start_time,
-    out_file
+def process_whisper_segments(
+    segments, info, duration,
+    start_time, out_file
 ):
-    """Process segments: print + write to file."""
+    """Process faster-whisper segments."""
     prob = info.language_probability
     header = (
         f"Detected language: {info.language}"
@@ -194,7 +298,9 @@ def process_segments(
     print("Transcript:")
     print("-" * 65)
     chunk_count = 0
-    with open(out_file, "w", encoding="utf-8") as f:
+    with open(
+        out_file, "w", encoding="utf-8"
+    ) as f:
         f.write(header + "\n")
         f.write("=" * 60 + "\n\n")
         for segment in segments:
@@ -212,11 +318,28 @@ def process_segments(
 
 
 # --------------------------------------------------------------
-def main():
-    """Main function."""
-    args = parse_args()
-    start_time = time.time()
-    model = load_model()
+def process_mlx_result(result, out_file):
+    """Process mlx-whisper result."""
+    text = result.get("text", "")
+    lang = result.get("language", "en")
+    header = f"Detected language: {lang}"
+    print(f"\n{header}\n")
+    print("Transcript:")
+    print("-" * 65)
+    print(text)
+    print("-" * 65)
+    with open(
+        out_file, "w", encoding="utf-8"
+    ) as f:
+        f.write(header + "\n")
+        f.write("=" * 60 + "\n\n")
+        f.write(text + "\n")
+
+
+# --------------------------------------------------------------
+def run_whisper(args, start_time):
+    """Run transcription with faster-whisper."""
+    model = load_whisper_model(args.model)
     duration = try_get_duration(
         args.audio_file
     )
@@ -225,20 +348,65 @@ def main():
         print(
             f"Audio duration: {mins:.1f} min"
         )
-    segments, info = transcribe_audio(
+    segments, info = transcribe_whisper(
         model, args.audio_file
     )
-    out_file = make_output_path(args.audio_file)
-    process_segments(
+    out_file = make_output_path(
+        args.audio_file
+    )
+    process_whisper_segments(
         segments, info, duration,
         start_time, out_file,
     )
+    return out_file
+
+
+# --------------------------------------------------------------
+def run_mlx(args, start_time):
+    """Run transcription with mlx-whisper."""
+    model = load_mlx_model(args.model)
+    duration = try_get_duration(
+        args.audio_file
+    )
+    if duration:
+        mins = duration / 60
+        print(
+            f"Audio duration: {mins:.1f} min"
+        )
+    result = transcribe_mlx(
+        model, args.audio_file
+    )
+    out_file = make_output_path(
+        args.audio_file
+    )
+    process_mlx_result(result, out_file)
+    return out_file
+
+
+# --------------------------------------------------------------
+def main():
+    """Main function."""
+    args = parse_args()
+    validate_model(args.engine, args.model)
+    print(
+        f"Engine: {args.engine}, "
+        f"Model: {args.model}"
+    )
+    start_time = time.time()
+    if args.engine == "mlx":
+        out_file = run_mlx(args, start_time)
+    else:
+        out_file = run_whisper(
+            args, start_time
+        )
     elapsed = time.time() - start_time
     print(
         f"\nDone! Total time: "
         f"{format_elapsed(elapsed)}"
     )
-    print(f"Transcript saved to: {out_file}")
+    print(
+        f"Transcript saved to: {out_file}"
+    )
 
 
 # --------------------------------------------------------------
