@@ -5,6 +5,7 @@
 #   python transcribe_mp3_to_txt.py <audio.mp3>
 #   python transcribe_mp3_to_txt.py -m small audio.mp3
 #   python transcribe_mp3_to_txt.py -e mlx audio.mp3
+#   python transcribe_mp3_to_txt.py -l fr audio.mp3
 #   python transcribe_mp3_to_txt.py --help
 #
 # Description:
@@ -20,6 +21,15 @@
 #   MLX also supports: distil-medium.en,
 #     distil-small.en, large, large-v2, etc.
 #
+# Language:
+#   Use -l/--language to specify language.
+#   Default is "en" (English).
+#   Use ISO 639-1 codes, e.g.:
+#     en (English), fr (French),
+#     es (Spanish), de (German),
+#     ru (Russian), ja (Japanese), etc.
+#   If not specified, defaults to English.
+#
 # Output:
 #   Saves transcript to a .txt file
 #   with the same name as the audio file.
@@ -29,6 +39,8 @@
 #   python transcribe_mp3_to_txt.py -m small rec.mp3
 #   python transcribe_mp3_to_txt.py -e mlx rec.mp3
 #   python transcribe_mp3_to_txt.py -e mlx -m tiny rec.mp3
+#   python transcribe_mp3_to_txt.py -l fr french.mp3
+#   python transcribe_mp3_to_txt.py -e mlx -l fr a.mp3
 
 import argparse
 import os
@@ -103,6 +115,17 @@ def parse_args():
             "-mlx for Apple Silicon, "
             "default) or whisper "
             "(faster-whisper on CPU)."
+        ),
+    )
+    parser.add_argument(
+        "-l", "--language",
+        default="en",
+        help=(
+            "Language code (ISO 639-1). "
+            "Default: en (English). "
+            "Examples: fr (French), "
+            "es (Spanish), de (German), "
+            "ru (Russian), ja (Japanese)."
         ),
     )
     return parser.parse_args()
@@ -196,21 +219,28 @@ def try_get_duration(audio_file):
 
 
 # --------------------------------------------------------------
-def transcribe_whisper(model, audio_file):
+def transcribe_whisper(
+    model, audio_file, language="en"
+):
     """Transcribe using faster-whisper."""
     print(f"Transcribing {audio_file}...")
+    print(f"Language: {language}")
     segments, info = model.transcribe(
-        audio_file, language="en"
+        audio_file, language=language
     )
     return segments, info
 
 
 # --------------------------------------------------------------
-def transcribe_mlx(model, audio_file):
+def transcribe_mlx(
+    model, audio_file, language="en"
+):
     """Transcribe using lightning-whisper-mlx."""
     print(f"Transcribing {audio_file}...")
+    print(f"Language: {language}")
     result = model.transcribe(
-        audio_path=audio_file
+        audio_path=audio_file,
+        language=language,
     )
     return result
 
@@ -349,7 +379,8 @@ def run_whisper(args, start_time):
             f"Audio duration: {mins:.1f} min"
         )
     segments, info = transcribe_whisper(
-        model, args.audio_file
+        model, args.audio_file,
+        args.language,
     )
     out_file = make_output_path(
         args.audio_file
@@ -374,7 +405,8 @@ def run_mlx(args, start_time):
             f"Audio duration: {mins:.1f} min"
         )
     result = transcribe_mlx(
-        model, args.audio_file
+        model, args.audio_file,
+        args.language,
     )
     out_file = make_output_path(
         args.audio_file
@@ -390,7 +422,8 @@ def main():
     validate_model(args.engine, args.model)
     print(
         f"Engine: {args.engine}, "
-        f"Model: {args.model}"
+        f"Model: {args.model}, "
+        f"Language: {args.language}"
     )
     start_time = time.time()
     if args.engine == "mlx":
