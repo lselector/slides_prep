@@ -17,7 +17,7 @@
 #       on CPU with int8 compute type
 #
 # Models (both engines):
-#   tiny (default), base, small, medium
+#   tiny, base, small, medium (default)
 #   MLX also supports: distil-medium.en,
 #     distil-small.en, large, large-v2, etc.
 #
@@ -98,10 +98,10 @@ def parse_args():
     )
     parser.add_argument(
         "-m", "--model",
-        default="tiny",
+        default="medium",
         help=(
-            "Model size: tiny (default), "
-            "base, small, medium. "
+            "Model size: tiny, "
+            "base, small, medium (default). "
             "MLX also supports distil-* and "
             "large variants."
         ),
