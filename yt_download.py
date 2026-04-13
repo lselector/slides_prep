@@ -57,11 +57,12 @@ def sanitize_title(title):
     title = transliterate_title(title)
     cleaned = re.sub(r'[^a-zA-Z0-9]+', '_', title)
     cleaned = cleaned.strip('_')
+    cleaned = cleaned[:40].rstrip('_')
     return cleaned
 
 # --------------------------------------------------------------
-def make_output_template(quality_mode):
-    """Build output template with date and quality."""
+def make_output_template(quality_mode, title):
+    """Build output template with date, title, and quality."""
     date_prefix = datetime.now().strftime("%Y%m%d")
     suffix = QUALITY_SUFFIX.get(quality_mode, "")
     if quality_mode == "audio":
@@ -70,7 +71,7 @@ def make_output_template(quality_mode):
         ext = "mp4"
     template = (
         f"{date_prefix}_"
-        f"%(title)s{suffix}.{ext}"
+        f"{title}{suffix}.{ext}"
     )
     return template
 
@@ -79,8 +80,6 @@ def get_common_opts(output_template):
     """Return common yt-dlp options."""
     return {
         "outtmpl": output_template,
-        "restrictfilenames": True,
-        "windowsfilenames": True,
         "quiet": False,
         "overwrites": True,
     }
@@ -210,16 +209,26 @@ def show_basic_info(filepath):
     print(f"File size: {size_mb:.2f} MB")
 
 # --------------------------------------------------------------
+def fetch_title(url):
+    """Fetch video title without downloading."""
+    with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+        info = ydl.extract_info(url, download=False)
+        return info.get("title", "video")
+
+# --------------------------------------------------------------
 def download_video(url, quality_mode="medium"):
     """Download a YouTube video with given quality."""
     date_prefix = datetime.now().strftime("%Y%m%d")
+    raw_title = fetch_title(url)
+    title = sanitize_title(raw_title)
     output_template = make_output_template(
-        quality_mode
+        quality_mode, title
     )
     ydl_opts = get_ydl_opts(
         quality_mode, output_template
     )
     print(f"Downloading: {url}")
+    print(f"Title: {raw_title}")
     print(f"Quality: {quality_mode}")
     print()
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
