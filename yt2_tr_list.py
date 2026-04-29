@@ -29,30 +29,56 @@ def parse_urls_file(filepath: str) -> list[dict]:
     lines = Path(filepath).read_text(
         encoding="utf-8"
     ).splitlines()
-    i = 0
-    while i < len(lines):
-        line = lines[i].strip()
-        m = re.match(r"^(\d+)\.\s+(.+)", line)
-        if m:
-            num = int(m.group(1))
-            title = m.group(2).strip()
-            url = ""
-            if i + 1 < len(lines):
-                next_line = lines[i + 1].strip()
-                if "youtube.com" in next_line:
-                    url = next_line
-                    i += 1
-            if url and "NOT FOUND" not in url:
-                vid_id = extract_video_id(url)
-                if vid_id:
-                    videos.append({
-                        "num": num,
-                        "title": title,
-                        "url": url,
-                        "id": vid_id,
-                    })
-        i += 1
+    num = 0
+    pending_title = ""
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        title = extract_title(stripped)
+        if title:
+            pending_title = title
+        if "youtube.com" in stripped or "youtu.be" in stripped:
+            url = extract_url(stripped)
+            if not url or "NOT FOUND" in url:
+                continue
+            vid_id = extract_video_id(url)
+            if not vid_id:
+                continue
+            num += 1
+            videos.append({
+                "num": num,
+                "title": pending_title or url,
+                "url": url,
+                "id": vid_id,
+            })
+            pending_title = ""
     return videos
+
+
+# --------------------------------------------------------------
+def extract_title(line: str) -> str:
+    """Extract a title from a bullet/numbered line."""
+    m = re.match(r"^\s*(?:[-*]|\d+\.)\s+(.+)", line)
+    if not m:
+        return ""
+    rest = m.group(1).strip()
+    if "youtube.com" in rest or "youtu.be" in rest:
+        return ""
+    qm = re.search(r'"([^"]+)"', rest)
+    if qm:
+        return qm.group(1).strip()
+    return rest
+
+
+# --------------------------------------------------------------
+def extract_url(line: str) -> str:
+    """Extract first YouTube URL from a line."""
+    m = re.search(
+        r"https?://[^\s\)\]]+",
+        line,
+    )
+    return m.group(0) if m else ""
 
 
 # --------------------------------------------------------------
@@ -89,6 +115,9 @@ def parse_input_file(filepath: str) -> list[dict]:
 def extract_video_id(url: str) -> str | None:
     """Extract video ID from a YouTube URL."""
     m = re.search(r"v=([A-Za-z0-9_-]{11})", url)
+    if m:
+        return m.group(1)
+    m = re.search(r"youtu\.be/([A-Za-z0-9_-]{11})", url)
     return m.group(1) if m else None
 
 
