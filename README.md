@@ -8,17 +8,19 @@ and fetching AI leaderboard data.
 
 ## Table of Contents
 
-- [get_weather.bash](#get_weatherbash)
-- [leaderboard.py](#leaderboardpy)
-- [split_audio.bash](#split_audiobash)
-- [summarize.py](#summarizepy)
-- [transcribe_mp3_to_txt.py](#transcribe_mp3_to_txtpy)
-- [yt_download.py](#yt_downloadpy)
-- [yt_titles2urls_list.py](#yt_titles2urls_listpy)
-- [yt_tr2summary_list.py](#yt_tr2summary_listpy)
-- [yt_tr_channel.py](#yt_tr_channelpy)
-- [yt_tr_list.py](#yt_tr_listpy)
-- [yt_url_tr_sum.py](#yt_url_tr_sumpy)
+- [slides\_prep](#slides_prep)
+  - [Table of Contents](#table-of-contents)
+  - [get\_weather.bash](#get_weatherbash)
+  - [leaderboard.py](#leaderboardpy)
+  - [split\_audio.bash](#split_audiobash)
+  - [summarize.py](#summarizepy)
+  - [transcribe\_mp3\_to\_txt.py](#transcribe_mp3_to_txtpy)
+  - [yt\_download.py](#yt_downloadpy)
+  - [yt\_titles2urls\_list.py](#yt_titles2urls_listpy)
+  - [yt\_tr2summary\_list.py](#yt_tr2summary_listpy)
+  - [yt\_tr\_channel.py](#yt_tr_channelpy)
+  - [yt\_tr\_list.py](#yt_tr_listpy)
+  - [yt\_url\_tr\_sum.py](#yt_url_tr_sumpy)
 
 ---
 

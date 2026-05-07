@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""Find YouTube video URLs by title using yt-dlp."""
+"""
+Find YouTube video URLs by title using yt-dlp.
+
+Outputs results in a file in this format:
+
+YouTube URLs - Generated {now}
+-----------------------------------------------------------
+
+1. short_title
+   URL
+
+2. short_title
+   URL
+
+"""
 
 import re
 import sys
