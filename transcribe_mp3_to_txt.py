@@ -1,46 +1,82 @@
 #!/usr/bin/env python3
-"""Transcribe MP3 audio files to text."""
+"""Transcribe audio or video files to text."""
 
 # Usage:
-#   python transcribe_mp3_to_txt.py <audio.mp3>
-#   python transcribe_mp3_to_txt.py -m small audio.mp3
-#   python transcribe_mp3_to_txt.py -e mlx audio.mp3
-#   python transcribe_mp3_to_txt.py -l fr audio.mp3
+#   python transcribe_mp3_to_txt.py <input>
+#   python transcribe_mp3_to_txt.py -d 2:00 talk.mp4
+#   python transcribe_mp3_to_txt.py -e mlx rec.mp3
+#   python transcribe_mp3_to_txt.py -m medium rec.mp3
+#   python transcribe_mp3_to_txt.py -l fr rec.mp3
+#   python transcribe_mp3_to_txt.py \
+#       --initial-prompt "Muse Spark Meta" t.mp4
 #   python transcribe_mp3_to_txt.py --help
 #
 # Description:
-#   Transcribes an MP3 audio file to text.
-#   Supports two engines:
-#     - "mlx" (default): lightning-whisper-mlx
-#       optimized for Apple Silicon
-#     - "whisper": faster-whisper
-#       on CPU with int8 compute type
+#   Transcribes an audio or video file to text.
+#   Output is YouTube-style: short text lines
+#   (<= 40 chars) prepended with timestamps
+#   (M:SS or H:MM:SS).
 #
-# Models (both engines):
-#   tiny, base, small, medium (default)
-#   MLX also supports: distil-medium.en,
-#     distil-small.en, large, large-v2, etc.
+#   Accepted inputs:
+#     Audio: mp3, wav, m4a, flac, ogg, opus, aac
+#     Video: mp4, mov, mkv, avi, webm, m4v
+#   Video files have their audio extracted via
+#   ffmpeg to a temporary mp3 next to the input
+#   (<name>.extracted.mp3); the temp is removed
+#   after transcription.
 #
-# Language:
-#   Use -l/--language to specify language.
-#   Default is "en" (English).
-#   Use ISO 639-1 codes, e.g.:
-#     en (English), fr (French),
-#     es (Spanish), de (German),
-#     ru (Russian), ja (Japanese), etc.
-#   If not specified, defaults to English.
+# Engines (-e/--engine):
+#   - "whisper" (default): faster-whisper on CPU
+#     with int8. More accurate; tuned to avoid
+#     dropping spans (condition_on_previous_text
+#     off, no_speech_threshold lowered, compres-
+#     sion-ratio / log-prob skipping disabled).
+#     Supports --initial-prompt for biasing
+#     proper nouns / jargon.
+#   - "mlx": lightning-whisper-mlx, faster on
+#     Apple Silicon but drops content more often
+#     and exposes no tuning knobs.
+#
+# Models (-m/--model, default: large-v3):
+#   tiny, base, small, medium, large-v3.
+#   MLX also supports distil-* and other large
+#   variants. Smaller models are faster but
+#   miss/mishear more words. First run with a
+#   given model triggers a one-time download.
+#
+# Duration limit (-d/--duration):
+#   Only transcribe the first N of the input.
+#   Accepts ffmpeg time syntax: '120' (seconds),
+#   '2:00' (M:SS), or '0:02:00' (H:MM:SS). When
+#   set, ffmpeg trims to a temp mp3 that gets
+#   cleaned up after transcription. Useful for
+#   quick test runs.
+#
+# Language (-l/--language, default: en):
+#   ISO 639-1 codes. Examples: en (English),
+#   fr (French), es (Spanish), de (German),
+#   ru (Russian), ja (Japanese).
+#
+# Initial prompt (--initial-prompt):
+#   Optional vocabulary-biasing string passed to
+#   the decoder (faster-whisper only; ignored by
+#   mlx). Useful for proper nouns whisper has
+#   never seen, e.g. new product/brand names.
 #
 # Output:
-#   Saves transcript to a .txt file
-#   with the same name as the audio file.
+#   Saves transcript to a .txt file with the
+#   same base name as the *original* input
+#   (e.g. talk.mp4 -> talk.txt).
 #
 # Examples:
 #   python transcribe_mp3_to_txt.py rec.mp3
-#   python transcribe_mp3_to_txt.py -m small rec.mp3
-#   python transcribe_mp3_to_txt.py -e mlx rec.mp3
-#   python transcribe_mp3_to_txt.py -e mlx -m tiny rec.mp3
-#   python transcribe_mp3_to_txt.py -l fr french.mp3
-#   python transcribe_mp3_to_txt.py -e mlx -l fr a.mp3
+#   python transcribe_mp3_to_txt.py talk.mp4
+#   python transcribe_mp3_to_txt.py -d 2:00 t.mp4
+#   python transcribe_mp3_to_txt.py -e mlx t.mp4
+#   python transcribe_mp3_to_txt.py -m medium t.mp4
+#   python transcribe_mp3_to_txt.py -l fr a.mp3
+#   python transcribe_mp3_to_txt.py \
+#       --initial-prompt "Muse Spark Meta" t.mp4
 
 import argparse
 import os
@@ -59,8 +95,23 @@ warnings.filterwarnings(
     "ignore", message=".*MKL.*"
 )
 
+VIDEO_EXTS = {
+    ".mp4", ".mov", ".mkv", ".avi",
+    ".webm", ".m4v",
+}
+
+# Standard Whisper audio constants used to
+# convert lightning-whisper-mlx mel-frame seek
+# values to seconds: 160 / 16000 = 0.01 s/frame.
+WHISPER_SAMPLE_RATE = 16000
+WHISPER_HOP_LENGTH = 160
+
+# Max characters per timestamped chunk line.
+CHUNK_MAX_CHARS = 40
+
 WHISPER_MODELS = [
     "tiny", "base", "small", "medium",
+    "large", "large-v2", "large-v3",
 ]
 
 MLX_MODELS = [
@@ -94,27 +145,56 @@ def parse_args():
     )
     parser.add_argument(
         "audio_file",
-        help="Path to the MP3 file",
+        help=(
+            "Path to an audio (mp3, wav, m4a, "
+            "flac, ogg, opus, aac) or video "
+            "(mp4, mov, mkv, avi, webm, m4v) "
+            "file."
+        ),
     )
     parser.add_argument(
         "-m", "--model",
-        default="medium",
+        default="large-v3",
         help=(
-            "Model size: tiny, "
-            "base, small, medium (default). "
-            "MLX also supports distil-* and "
-            "large variants."
+            "Model size: tiny, base, small, "
+            "medium, large-v3 (default). MLX "
+            "also supports distil-* and other "
+            "large variants. Smaller = faster "
+            "but more dropped/missed words."
+        ),
+    )
+    parser.add_argument(
+        "--initial-prompt",
+        default=None,
+        help=(
+            "Optional prompt biasing vocabulary "
+            "(faster-whisper only; ignored by "
+            "mlx engine). Useful for names, "
+            "jargon, acronyms."
+        ),
+    )
+    parser.add_argument(
+        "-d", "--duration",
+        default=None,
+        help=(
+            "Only transcribe the first N of the "
+            "input. Accepts ffmpeg time syntax: "
+            "'120' (seconds), '2:00' (M:SS), or "
+            "'0:02:00' (H:MM:SS). Useful for "
+            "quick test runs."
         ),
     )
     parser.add_argument(
         "-e", "--engine",
-        default="mlx",
+        default="whisper",
         choices=["whisper", "mlx"],
         help=(
-            "Engine: mlx (lightning-whisper"
-            "-mlx for Apple Silicon, "
-            "default) or whisper "
-            "(faster-whisper on CPU)."
+            "Engine: whisper (faster-whisper "
+            "on CPU, default — more accurate, "
+            "supports tuning knobs) or mlx "
+            "(lightning-whisper-mlx, faster on "
+            "Apple Silicon but drops content "
+            "more often and exposes no tuning)."
         ),
     )
     parser.add_argument(
@@ -187,6 +267,64 @@ def load_mlx_model(model_name):
 
 
 # --------------------------------------------------------------
+def is_video_file(path):
+    """True if path has a video extension."""
+    return Path(path).suffix.lower() in VIDEO_EXTS
+
+
+# --------------------------------------------------------------
+def prepare_audio_input(input_path, duration=None):
+    """Run ffmpeg if needed; return audio path.
+
+    Returns (audio_path, temp_path_or_None).
+    The caller deletes temp_path if non-None.
+
+    ffmpeg is invoked when the input is video
+    OR a duration limit is requested. Both
+    cases produce a temp mp3 next to the input
+    (<name>.extracted.mp3) so transcription
+    sees a plain audio file.
+    """
+    is_video = is_video_file(input_path)
+    if not is_video and duration is None:
+        return input_path, None
+
+    src = Path(input_path)
+    out = src.with_suffix(".extracted.mp3")
+    if is_video and duration:
+        action = (
+            f"Extracting + trimming "
+            f"to {duration}"
+        )
+    elif is_video:
+        action = "Extracting audio from video"
+    else:
+        action = f"Trimming to {duration}"
+    print(f"{action}: {src.name} -> {out.name}")
+
+    cmd = ["ffmpeg", "-y", "-i", str(src)]
+    if duration:
+        cmd += ["-t", str(duration)]
+    cmd += [
+        "-vn",
+        "-acodec", "libmp3lame",
+        "-q:a", "4",
+        str(out),
+    ]
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "ffmpeg failed:\n"
+            f"{result.stderr}"
+        )
+    return str(out), str(out)
+
+
+# --------------------------------------------------------------
 def get_audio_duration(audio_file):
     """Get audio duration via ffprobe."""
     cmd = [
@@ -220,13 +358,36 @@ def try_get_duration(audio_file):
 
 # --------------------------------------------------------------
 def transcribe_whisper(
-    model, audio_file, language="en"
+    model, audio_file,
+    language="en", initial_prompt=None,
 ):
-    """Transcribe using faster-whisper."""
+    """Transcribe using faster-whisper.
+
+    Uses settings tuned to avoid dropping
+    spans of audio (a common whisper failure
+    mode):
+      - condition_on_previous_text=False
+        prevents drift / cascading skips.
+      - no_speech_threshold=0.2 (vs default
+        0.6) keeps borderline-confidence
+        speech instead of treating it as
+        silence.
+      - compression_ratio_threshold=None and
+        log_prob_threshold=None disable the
+        whole-window dropping that whisper
+        does when a window looks "weird".
+    """
     print(f"Transcribing {audio_file}...")
     print(f"Language: {language}")
     segments, info = model.transcribe(
-        audio_file, language=language
+        audio_file,
+        language=language,
+        initial_prompt=initial_prompt,
+        condition_on_previous_text=False,
+        no_speech_threshold=0.2,
+        compression_ratio_threshold=None,
+        log_prob_threshold=None,
+        beam_size=5,
     )
     return segments, info
 
@@ -314,6 +475,91 @@ def make_output_path(audio_file):
 
 
 # --------------------------------------------------------------
+def format_ts(seconds):
+    """Format seconds as M:SS or H:MM:SS.
+
+    Matches the YouTube-style format shown in
+    examples (e.g. 0:02, 12:34, 1:02:03).
+    """
+    if seconds is None or seconds < 0:
+        seconds = 0
+    total = int(seconds)
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
+# --------------------------------------------------------------
+def split_into_chunks(text, max_chars):
+    """Split text into <= max_chars chunks.
+
+    Breaks on word boundaries. A single word
+    longer than max_chars is kept intact (so
+    the chunk may exceed max_chars in that
+    rare case rather than splitting a word).
+    """
+    text = text.strip()
+    if not text:
+        return []
+    chunks = []
+    current = ""
+    for word in text.split():
+        if not current:
+            current = word
+            continue
+        if len(current) + 1 + len(word) <= max_chars:
+            current += " " + word
+        else:
+            chunks.append(current)
+            current = word
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+# --------------------------------------------------------------
+def chunks_with_timestamps(
+    start, end, text,
+    max_chars=CHUNK_MAX_CHARS,
+):
+    """Split a segment into timestamped chunks.
+
+    Distributes the segment's [start, end] time
+    across chunks proportionally to chunk char
+    length. Returns list of (timestamp_seconds,
+    chunk_text).
+    """
+    chunks = split_into_chunks(text, max_chars)
+    if not chunks:
+        return []
+    total_len = sum(len(c) for c in chunks)
+    duration = max(0.0, (end or start) - start)
+    if total_len == 0 or duration == 0:
+        return [(start, c) for c in chunks]
+    out = []
+    consumed = 0
+    for c in chunks:
+        ts = start + duration * (
+            consumed / total_len
+        )
+        out.append((ts, c))
+        consumed += len(c)
+    return out
+
+
+# --------------------------------------------------------------
+def write_timestamped(f, ts, text):
+    """Write 'M:SS\\ntext\\n' to file + stdout."""
+    stamp = format_ts(ts)
+    print(stamp)
+    print(text)
+    f.write(stamp + "\n")
+    f.write(text + "\n")
+
+
+# --------------------------------------------------------------
 def process_whisper_segments(
     segments, info, duration,
     start_time, out_file
@@ -334,9 +580,12 @@ def process_whisper_segments(
         f.write(header + "\n")
         f.write("=" * 60 + "\n\n")
         for segment in segments:
-            text = segment.text
-            print(text)
-            f.write(text + "\n")
+            for ts, text in chunks_with_timestamps(
+                segment.start,
+                segment.end,
+                segment.text,
+            ):
+                write_timestamped(f, ts, text)
             chunk_count += 1
             if chunk_count % 10 == 0:
                 print_timing(
@@ -348,42 +597,76 @@ def process_whisper_segments(
 
 
 # --------------------------------------------------------------
+def mlx_seek_to_seconds(seek):
+    """Convert mlx mel-frame seek to seconds."""
+    return (
+        float(seek)
+        * WHISPER_HOP_LENGTH
+        / WHISPER_SAMPLE_RATE
+    )
+
+
+# --------------------------------------------------------------
 def process_mlx_result(result, out_file):
     """Process mlx-whisper result."""
-    text = result.get("text", "")
     lang = result.get("language", "en")
     header = f"Detected language: {lang}"
     print(f"\n{header}\n")
     print("Transcript:")
     print("-" * 65)
-    print(text)
-    print("-" * 65)
+    segments = result.get("segments") or []
     with open(
         out_file, "w", encoding="utf-8"
     ) as f:
         f.write(header + "\n")
         f.write("=" * 60 + "\n\n")
-        f.write(text + "\n")
+        if segments:
+            for seg in segments:
+                # mlx returns [start_seek,
+                # end_seek, text] in mel-frames.
+                start_seek, end_seek, text = (
+                    seg[0], seg[1], seg[2]
+                )
+                start = mlx_seek_to_seconds(
+                    start_seek
+                )
+                end = mlx_seek_to_seconds(
+                    end_seek
+                )
+                for ts, chunk in chunks_with_timestamps(
+                    start, end, text,
+                ):
+                    write_timestamped(
+                        f, ts, chunk
+                    )
+        else:
+            # Fallback: no segment timing —
+            # write plain text with a 0:00 stamp.
+            text = result.get("text", "")
+            for chunk in split_into_chunks(
+                text, CHUNK_MAX_CHARS
+            ):
+                write_timestamped(f, 0, chunk)
+    print("-" * 65)
 
 
 # --------------------------------------------------------------
-def run_whisper(args, start_time):
+def run_whisper(
+    audio_file, out_file,
+    model_name, language, start_time,
+    initial_prompt=None,
+):
     """Run transcription with faster-whisper."""
-    model = load_whisper_model(args.model)
-    duration = try_get_duration(
-        args.audio_file
-    )
+    model = load_whisper_model(model_name)
+    duration = try_get_duration(audio_file)
     if duration:
         mins = duration / 60
         print(
             f"Audio duration: {mins:.1f} min"
         )
     segments, info = transcribe_whisper(
-        model, args.audio_file,
-        args.language,
-    )
-    out_file = make_output_path(
-        args.audio_file
+        model, audio_file, language,
+        initial_prompt=initial_prompt,
     )
     process_whisper_segments(
         segments, info, duration,
@@ -393,23 +676,20 @@ def run_whisper(args, start_time):
 
 
 # --------------------------------------------------------------
-def run_mlx(args, start_time):
+def run_mlx(
+    audio_file, out_file,
+    model_name, language, start_time,
+):
     """Run transcription with mlx-whisper."""
-    model = load_mlx_model(args.model)
-    duration = try_get_duration(
-        args.audio_file
-    )
+    model = load_mlx_model(model_name)
+    duration = try_get_duration(audio_file)
     if duration:
         mins = duration / 60
         print(
             f"Audio duration: {mins:.1f} min"
         )
     result = transcribe_mlx(
-        model, args.audio_file,
-        args.language,
-    )
-    out_file = make_output_path(
-        args.audio_file
+        model, audio_file, language,
     )
     process_mlx_result(result, out_file)
     return out_file
@@ -420,18 +700,47 @@ def main():
     """Main function."""
     args = parse_args()
     validate_model(args.engine, args.model)
+
+    original_input = args.audio_file
+    out_file = make_output_path(original_input)
+
+    audio_file, temp_audio = prepare_audio_input(
+        original_input,
+        duration=args.duration,
+    )
+
     print(
         f"Engine: {args.engine}, "
         f"Model: {args.model}, "
         f"Language: {args.language}"
     )
     start_time = time.time()
-    if args.engine == "mlx":
-        out_file = run_mlx(args, start_time)
-    else:
-        out_file = run_whisper(
-            args, start_time
-        )
+    try:
+        if args.engine == "mlx":
+            run_mlx(
+                audio_file, out_file,
+                args.model, args.language,
+                start_time,
+            )
+        else:
+            run_whisper(
+                audio_file, out_file,
+                args.model, args.language,
+                start_time,
+                initial_prompt=(
+                    args.initial_prompt
+                ),
+            )
+    finally:
+        if temp_audio and os.path.exists(
+            temp_audio
+        ):
+            os.remove(temp_audio)
+            print(
+                f"Removed temp audio: "
+                f"{temp_audio}"
+            )
+
     elapsed = time.time() - start_time
     print(
         f"\nDone! Total time: "
